@@ -23,9 +23,16 @@ spec:
         appname:
           title: Application Name
           type: string
+          description: Lowercase letters, digits and dashes (used for the repo, image, namespace and k8s names)
+          pattern: '^[a-z]([-a-z0-9]*[a-z0-9])?$'
+          maxLength: 40
         env:
           title: Environment
           type: string
+          description: Short lowercase name, e.g. dev
+          pattern: '^[a-z]([-a-z0-9]*[a-z0-9])?$'
+          maxLength: 10
+          default: dev
 
   steps:
     - id: render

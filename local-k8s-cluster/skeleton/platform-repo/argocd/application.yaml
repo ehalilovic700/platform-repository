@@ -16,3 +16,11 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    # The namespace is created by the Crossplane claim from the same PR, possibly
+    # after this app first syncs - retry instead of failing permanently.
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

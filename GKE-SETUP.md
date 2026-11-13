@@ -8,6 +8,7 @@ When you're done, you'll have:
 - an app-of-apps for the per-app Applications that the Backstage template adds
 - Istio, with its ingress gateway as the cluster's ingress controller, exposing Argo CD and Backstage (steps 10–11)
 - your own Backstage app image with PostgreSQL, instead of the chart's demo image (step 12)
+- an end-to-end test of the template: create an app, merge its PR, see it running (step 13)
 
 Argo CD reads from GitHub `main`, not from this folder. Any repo change only takes effect after you push it.
 
@@ -428,10 +429,96 @@ Hard-refresh http://backstage.34.28.253.199.nip.io (Cmd+Shift+R), because the br
 
 To roll out a new build of your app later, push to `ehalilovic700/backstage`, wait for CI, then run `kubectl -n backstage rollout restart deploy/backstage`.
 
+## 13. Test the template: create an app end to end
+
+The examples use the app name `hello-demo` and environment `dev`, so everything ends up in namespace `hello-demo-dev`.
+
+### 13a. Run the template in Backstage
+
+Open http://backstage.34.28.253.199.nip.io, click **Create**, choose **Local Cluster + App + CI**, and enter:
+
+- Application Name: `hello-demo` (lowercase letters, digits and dashes; it must not be the name of a repo you already have)
+- Environment: `dev`
+
+Click **Review**, then **Create**, and watch the task log. You should see 6 green steps:
+
+1. render
+2. publish-app: creates `github.com/ehalilovic700/hello-demo`
+3. prepare-argocd
+4. prepare-crossplane
+5. create-platform-pr: opens a PR on `ehalilovic700/platform-repository`
+6. register: adds the app to the Backstage catalog
+
+### 13b. Let the app's CI build the image, then make it public
+
+Pushing the new repo starts its CI. CI builds `ghcr.io/ehalilovic700/hello-demo:<sha>` and commits the new image tag into `deploy/deployment.yaml`.
+
+```bash
+sleep 15
+gh run watch -R ehalilovic700/hello-demo "$(gh run list -R ehalilovic700/hello-demo --limit 1 --json databaseId -q '.[0].databaseId')"
+```
+
+New GHCR packages are private, and the cluster's `ghcr-secret` is only a placeholder, so make the package public. Open https://github.com/users/ehalilovic700/packages/container/package/hello-demo, go to **Package settings**, then **Change visibility**, and choose **Public**.
+
+### 13c. Merge the platform PR
+
+```bash
+gh pr list -R ehalilovic700/platform-repository           # "Add hello-demo (dev)"
+gh pr view add-hello-demo-dev -R ehalilovic700/platform-repository --json files -q '.files[].path'
+gh pr merge add-hello-demo-dev -R ehalilovic700/platform-repository --squash --delete-branch
+
+cd ~/Downloads/platform-repository-main && git pull    # keep your local copy in sync with the merge
+```
+
+### 13d. Watch Argo CD and Crossplane roll it out
+
+Argo CD checks GitHub about every 3 minutes. To make it check right away:
+
+```bash
+for a in crossplane-platform-demonstration backend-applications; do
+  kubectl -n argocd annotate application "$a" argocd.argoproj.io/refresh=normal --overwrite
+done
+
+kubectl get localclusters -A                      # hello-demo-dev  SYNCED/READY True
+kubectl get ns hello-demo-dev
+kubectl -n argocd get applications                # hello-demo-dev  Synced / Healthy
+kubectl -n hello-demo-dev get deploy,pods,svc
+```
+
+### 13e. Call the app
+
+```bash
+kubectl -n hello-demo-dev port-forward svc/hello-demo 8081:80 &
+sleep 2; curl -s localhost:8081; echo                    # Hello from hello-demo Service!
+kill %1
+```
+
+In Backstage, **Catalog** now lists the component `hello-demo`, owned by `development`.
+
+### 13f. Remove the test app (optional)
+
+Deleting the two files from the platform repo makes Argo CD prune the app. Crossplane then deletes the claim and, with it, the namespace.
+
+```bash
+cd ~/Downloads/platform-repository-main && git pull
+git rm infrastructure/crossplane/claims/hello-demo-dev.yaml \
+       infrastructure/argocd/backend/applications/hello-demo-dev.yaml
+git commit -m "Remove hello-demo (dev)" && git push
+
+gh repo delete ehalilovic700/hello-demo --yes      # needs: gh auth refresh -s delete_repo
+```
+
+Finally, in Backstage, open the `hello-demo` component, click **⋮**, then **Unregister entity**. The GHCR package can be deleted from its **Package settings** page.
+
 ## Troubleshooting
 
 | Symptom | Likely cause and fix |
 |---|---|
+| A template step fails at `publish:github` with `Bad credentials` / `Resource not accessible` | The token in `backstage/backstage-github` is missing or expired. Re-create it with `gh auth token` (it needs the `repo` and `workflow` scopes), then run `kubectl -n backstage rollout restart deploy/backstage` |
+| A template step fails with `Repository creation failed ... name already exists` | Choose another app name, or delete the old repo first. |
+| App pods are in `ImagePullBackOff` with `ghcr.io/ehalilovic700/<app>` | The app's GHCR package is still private (step 13b), or its CI hasn't finished yet. |
+| App pods are in `ImagePullBackOff` with image `<app>:latest` | CI hasn't yet committed the GHCR image tag into `deploy/deployment.yaml`. Wait for CI, then refresh the Argo CD app. |
+| The per-app Application failed with `namespaces "<app>-<env>" not found` | Apps created before the retry was added to the skeleton don't retry. Sync it again: `kubectl -n argocd patch application <app>-<env> --type merge -p '{"operation":{"sync":{}}}'` |
 | Ingress `EXTERNAL-IP` stays `<pending>` or doesn't match `$INGRESS_IP` | The reserved address is in a different region or already in use. Check with `gcloud compute addresses list`. |
 | `istio-ingress` pods in `ImagePullBackOff` with `image: auto` | The gateway was created before istiod's injector was running. Fix: `kubectl -n istio-ingress rollout restart deploy/istio-ingressgateway` |
 | `istio-base` / `istiod` keep going OutOfSync on webhook configurations | istiod rewrites these at runtime. The apps' `ignoreDifferences` already covers the known fields; describe the app to see which other field is changing. |

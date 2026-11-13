@@ -54,6 +54,7 @@ Onboarding an app (`appname`, `env`) through the Backstage template **Local Clus
 4. Reserve a static IP and install Istio and the ingress gateway, then restrict access to your own IP (step 10).
 5. Install Backstage and the routes that expose both UIs (step 11).
 6. Build your own Backstage app image once with `create-app` and CI, then switch to it (step 12).
+7. Test the template end to end by creating an app (step 13).
 
 ## Accessing the UIs
 
@@ -77,6 +78,6 @@ To find the ingress IP: `kubectl -n istio-ingress get svc istio-ingressgateway`.
 
 ## Known limitations
 
-- Per-app Argo CD Applications have no retry. If one syncs before Crossplane has created its namespace, sync it again manually.
+- An app's container image is pushed to GHCR as a private package. The cluster's pull secret is only a placeholder, so make each app's package public after its first CI run (`GKE-SETUP.md` step 13b).
 - The template's output text names `infrastructure/argocd/applications`, but per-app files are actually written to `infrastructure/argocd/backend/applications`.
 - The static ingress IP is hardcoded in `infrastructure/istio/` and `infrastructure/argocd/platform/`. A new sandbox means a new IP: replace it in those files and push.

@@ -59,7 +59,8 @@ There are three layers, and onboarding one app touches all of them:
 ## Known gaps
 
 - The template's output text says `infrastructure/argocd/applications`, but per-app files are actually written to `infrastructure/argocd/backend/applications`.
-- Per-app Argo CD Applications have no retry. If one syncs before Crossplane has created its namespace, it fails and stays failed until it is synced again.
+- The skeleton's per-app Argo CD Application has a sync `retry`, because its namespace comes from the Crossplane claim in the same PR and may not exist yet at first sync. Apps generated before that change have no retry and need a manual sync if they hit `namespace not found`.
+- Template parameters `appname` and `env` are restricted to lowercase DNS-style names, because they become repo, GHCR image, namespace and Kubernetes object names.
 - `infrastructure/argocd/backend/application/testapp.yaml` (singular `application`) is an empty stray file.
 - The GitHub owner `ehalilovic700` is hardcoded in the template, the skeleton and the Argo CD apps.
 - The provider config file is named `k8s-provide-config.yaml` (sic).
