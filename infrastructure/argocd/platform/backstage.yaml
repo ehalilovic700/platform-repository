@@ -1,6 +1,8 @@
-# Backstage (stock demo image from the official chart) loading this repo's template.
-# Needs Secret backstage/backstage-github with key GITHUB_TOKEN (created by hand,
-# GKE-SETUP.md step 11). 34.28.253.199 is filled in by step 10.
+# Backstage: your own app (ghcr.io/ehalilovic700/backstage, built by that repo's CI)
+# with the chart's bundled PostgreSQL. Secrets created by hand, never in git
+# (GKE-SETUP.md steps 11 and 12e):
+#   backstage/backstage-github    key GITHUB_TOKEN
+#   backstage/backstage-postgres  keys admin-password, user-password
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -16,8 +18,14 @@ spec:
       releaseName: backstage            # Service: backstage.backstage.svc:7007
       valuesObject:
         backstage:
-          # Passing any --config disables the image's defaults, so load them explicitly first
-          args: ["--config", "app-config.yaml"]
+          image:
+            registry: ghcr.io
+            repository: ehalilovic700/backstage
+            tag: latest                 # new build -> kubectl -n backstage rollout restart deploy/backstage
+            pullPolicy: Always
+          # Passing any --config disables the image's defaults, so list them explicitly;
+          # the chart appends the appConfig below last, so it wins.
+          args: ["--config", "app-config.yaml", "--config", "app-config.production.yaml"]
           extraEnvVarsSecrets:
             - backstage-github
           appConfig:
@@ -29,6 +37,19 @@ spec:
                 origin: http://backstage.34.28.253.199.nip.io
               csp:
                 upgrade-insecure-requests: false   # served over plain HTTP
+              database:
+                client: pg
+                pluginDivisionMode: schema         # one DB, a schema per plugin (no CREATEDB needed)
+                connection:
+                  host:
+                    $env: POSTGRES_HOST            # POSTGRES_* env vars are injected by the chart
+                  port:
+                    $env: POSTGRES_PORT
+                  user:
+                    $env: POSTGRES_USER
+                  password:
+                    $env: POSTGRES_PASSWORD
+                  database: backstage
             auth:
               providers:
                 guest:
@@ -38,12 +59,27 @@ spec:
                 - host: github.com
                   token:
                     $env: GITHUB_TOKEN
+            techdocs:                              # build docs in the pod (mkdocs is in the image)
+              builder: local
+              generator:
+                runIn: local
+              publisher:
+                type: local
             catalog:
               locations:
                 - type: url
                   target: https://github.com/ehalilovic700/platform-repository/blob/main/local-k8s-cluster/template.yaml
                   rules:
                     - allow: [Template]
+        postgresql:
+          enabled: true
+          auth:
+            username: backstage
+            database: backstage
+            existingSecret: backstage-postgres     # fixed password; a generated one would change on every Argo CD sync
+          primary:
+            persistence:
+              size: 2Gi
   destination:
     server: https://kubernetes.default.svc
     namespace: backstage
