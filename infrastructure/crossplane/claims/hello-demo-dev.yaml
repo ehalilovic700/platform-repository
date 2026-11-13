@@ -1,7 +1,0 @@
-apiVersion: platform.example.org/v1alpha1
-kind: LocalCluster
-metadata:
-  name: hello-demo-dev
-spec:
-  appName: hello-demo-dev
-  environment: dev
