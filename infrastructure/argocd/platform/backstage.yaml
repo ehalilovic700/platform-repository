@@ -72,6 +72,10 @@ spec:
                   target: https://github.com/ehalilovic700/platform-repository/blob/main/local-k8s-cluster/template.yaml
                   rules:
                     - allow: [Template]
+                - type: url
+                  target: https://github.com/ehalilovic700/platform-repository/blob/main/catalog/org.yaml
+                  rules:
+                    - allow: [Group, User]
         postgresql:
           enabled: true
           auth:

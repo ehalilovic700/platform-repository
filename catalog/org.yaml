@@ -1,0 +1,20 @@
+# Groups referenced as owners: the template (spec.owner: platform-team) and the
+# apps it creates (skeleton catalog-info.yaml: owner: development).
+# Loaded by Backstage via the catalog location in infrastructure/argocd/platform/backstage.yaml.
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: platform-team
+  description: Owns the platform - Argo CD, Crossplane, Istio and Backstage
+spec:
+  type: team
+  children: []
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: development
+  description: Owns applications created from the Local Cluster + App + CI template
+spec:
+  type: team
+  children: []
