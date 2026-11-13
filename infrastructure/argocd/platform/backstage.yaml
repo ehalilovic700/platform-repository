@@ -1,0 +1,55 @@
+# Backstage (stock demo image from the official chart) loading this repo's template.
+# Needs Secret backstage/backstage-github with key GITHUB_TOKEN (created by hand,
+# GKE-SETUP.md step 11). 34.28.253.199 is filled in by step 10.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: backstage
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://backstage.github.io/charts
+    chart: backstage
+    targetRevision: 2.10.2
+    helm:
+      releaseName: backstage            # Service: backstage.backstage.svc:7007
+      valuesObject:
+        backstage:
+          # Passing any --config disables the image's defaults, so load them explicitly first
+          args: ["--config", "app-config.yaml"]
+          extraEnvVarsSecrets:
+            - backstage-github
+          appConfig:
+            app:
+              baseUrl: http://backstage.34.28.253.199.nip.io
+            backend:
+              baseUrl: http://backstage.34.28.253.199.nip.io
+              cors:
+                origin: http://backstage.34.28.253.199.nip.io
+              csp:
+                upgrade-insecure-requests: false   # served over plain HTTP
+            auth:
+              providers:
+                guest:
+                  dangerouslyAllowOutsideDevelopment: true
+            integrations:
+              github:
+                - host: github.com
+                  token:
+                    $env: GITHUB_TOKEN
+            catalog:
+              locations:
+                - type: url
+                  target: https://github.com/ehalilovic700/platform-repository/blob/main/local-k8s-cluster/template.yaml
+                  rules:
+                    - allow: [Template]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: backstage
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

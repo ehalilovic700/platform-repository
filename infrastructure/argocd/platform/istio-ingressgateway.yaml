@@ -1,0 +1,29 @@
+# Istio ingress gateway (the cluster's ingress controller). Apply after istiod is
+# Healthy, so the sidecar injector exists when the gateway pods are created.
+# 34.28.253.199 is filled in by GKE-SETUP.md step 10 (reserved static IP).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: istio-ingressgateway
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://istio-release.storage.googleapis.com/charts
+    chart: gateway
+    targetRevision: 1.30.8
+    helm:
+      releaseName: istio-ingressgateway   # pods get label istio=ingressgateway
+      valuesObject:
+        service:
+          type: LoadBalancer
+          loadBalancerIP: 34.28.253.199
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: istio-ingress
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

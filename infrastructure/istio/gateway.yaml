@@ -1,0 +1,34 @@
+# Single entry point for the platform UIs. Hostnames use nip.io, so
+# <name>.<ip>.nip.io resolves to the ingress IP without any DNS setup.
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: platform-gateway
+  namespace: istio-ingress
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    - port:
+        number: 80
+        name: http-backstage
+        protocol: HTTP
+      hosts:
+        - backstage.34.28.253.199.nip.io
+    - port:
+        number: 80
+        name: http-argocd
+        protocol: HTTP
+      hosts:
+        - argocd.34.28.253.199.nip.io
+      tls:
+        httpsRedirect: true
+    # Argo CD terminates TLS itself (self-signed cert), so pass it through untouched
+    - port:
+        number: 443
+        name: tls-argocd
+        protocol: TLS
+      hosts:
+        - argocd.34.28.253.199.nip.io
+      tls:
+        mode: PASSTHROUGH

@@ -6,6 +6,7 @@ When you're done, you'll have:
 - Crossplane
 - the root Argo CD app, which syncs `infrastructure/crossplane` from **your** GitHub repo `ehalilovic700/platform-repository` (it installs provider-kubernetes, the function, the XRD and Composition, and the `livedemo-v5-dev` claim)
 - an app-of-apps for the per-app Applications that the Backstage template adds
+- Istio, with its ingress gateway as the cluster's ingress controller, exposing Argo CD and Backstage (steps 10–11)
 
 Argo CD reads from GitHub `main`, not from this folder. Any repo change only takes effect after you push it.
 
@@ -28,6 +29,8 @@ brew install helm
 `get-credentials` (step 2) switches your local `kubectl` context to the new cluster. Afterwards, `gcloud config configurations activate default` switches gcloud back to your own account.
 
 ## 1. Variables (run again in every new terminal)
+
+On a Mac (zsh), run `setopt interactivecomments` first. Otherwise zsh passes the `# ...` comments in these commands as arguments, which causes errors like `providers.pkg.crossplane.io "#" not found`.
 
 ```bash
 export PROJECT_ID=playground-s-11-247c2506   # changes every time the sandbox is recreated
@@ -175,10 +178,98 @@ kubectl -n argocd patch configmap argocd-cmd-params-cm --type merge \
 kubectl -n argocd rollout restart deploy/argocd-server
 ```
 
+## 10. Istio and the Istio ingress gateway (ingress controller)
+
+Argo CD installs Istio from the official Helm charts (version 1.30.8). The Applications are in `infrastructure/argocd/platform/`. Apply them **in order**: the gateway pods need the istiod sidecar injector to exist already, or they get stuck with `image: auto`.
+
+**10a. Reserve a static IP and write it into the manifests.** Hostnames use `nip.io`, so `argocd.<ip>.nip.io` resolves to the IP without any DNS setup. Argo CD reads from GitHub, so the change has to be pushed.
+
+```bash
+setopt interactivecomments
+cd ~/Downloads/platform-repository-main
+export REGION=us-central1
+
+gcloud compute addresses create istio-ingress --region "$REGION"
+export INGRESS_IP=$(gcloud compute addresses describe istio-ingress --region "$REGION" --format='value(address)')
+echo "$INGRESS_IP"
+
+grep -rl INGRESS_IP infrastructure | xargs sed -i '' "s/INGRESS_IP/$INGRESS_IP/g"
+grep -rn INGRESS_IP infrastructure || echo "OK: IP filled in"
+
+git add . && git commit -m "Add Istio ingress, Backstage and routes" && git push
+```
+
+**10b. Install Istio in order.** Each step waits until the previous Argo CD app is Healthy:
+
+```bash
+wait_app() { until [ "$(kubectl -n argocd get application "$1" -o jsonpath='{.status.health.status}' 2>/dev/null)" = Healthy ]; do echo "waiting for $1..."; sleep 10; done; echo "$1 is Healthy"; }
+
+kubectl apply -f infrastructure/argocd/platform/istio-base.yaml
+wait_app istio-base
+
+kubectl apply -f infrastructure/argocd/platform/istiod.yaml
+wait_app istiod
+
+kubectl apply -f infrastructure/argocd/platform/istio-ingressgateway.yaml
+wait_app istio-ingressgateway
+
+kubectl -n istio-ingress get pods
+kubectl -n istio-ingress get svc istio-ingressgateway    # EXTERNAL-IP must equal $INGRESS_IP
+```
+
+**10c. Allow only your own IP through the ingress.** Backstage will hold your GitHub token, so don't leave it open to the internet. This is a `kubectl patch` rather than a git change, so your home IP stays out of the public repo. Argo CD won't revert it, because the chart doesn't set the field.
+
+```bash
+export MY_IP=$(curl -s https://checkip.amazonaws.com)
+echo "$MY_IP"
+kubectl -n istio-ingress patch svc istio-ingressgateway --type merge \
+  -p "{\"spec\":{\"loadBalancerSourceRanges\":[\"$MY_IP/32\"]}}"
+```
+
+## 11. Expose Argo CD and Backstage through the Istio ingress
+
+`infrastructure/istio/` defines one `Gateway`, `platform-gateway`, and two `VirtualService`s:
+
+| URL | Routes to | TLS |
+|---|---|---|
+| `https://argocd.<INGRESS_IP>.nip.io` | `argocd-server.argocd:443` | Passed through to Argo CD's own self-signed cert. HTTP redirects to HTTPS. |
+| `http://backstage.<INGRESS_IP>.nip.io` | `backstage.backstage:7007` | Plain HTTP |
+
+Backstage is installed from the official chart's stock demo image. It uses an in-memory database and guest sign-in, and loads `local-k8s-cluster/template.yaml` from your repo. For GitHub it uses your `gh` token from a Secret, which is never committed:
+
+```bash
+kubectl create namespace backstage
+kubectl -n backstage create secret generic backstage-github \
+  --from-literal=GITHUB_TOKEN="$(gh auth token)"
+
+kubectl apply -f infrastructure/argocd/platform/backstage.yaml
+wait_app backstage                 # the first start takes 2-3 minutes
+
+kubectl apply -f infrastructure/argocd/platform/istio-routes.yaml
+wait_app istio-routes
+
+curl -skI "https://argocd.$INGRESS_IP.nip.io" | head -1      # expect 200
+curl -sI  "http://backstage.$INGRESS_IP.nip.io" | head -1    # expect 200
+
+echo "Argo CD:   https://argocd.$INGRESS_IP.nip.io"
+echo "Backstage: http://backstage.$INGRESS_IP.nip.io"
+```
+
+- **Argo CD:** accept the self-signed certificate warning and log in as `admin`. The password was shared in chat, so change it right away: **User Info → Update Password**. Once you've done that, remove the initial password Secret: `kubectl -n argocd delete secret argocd-initial-admin-secret`.
+- **Backstage:** click **Enter** as Guest, then **Create**. The **Local Cluster + App + CI** template should be listed. It may take a minute to appear while the catalog does its first read.
+- The demo image keeps everything in memory, so catalog changes are lost whenever the pod restarts. That's fine for a sandbox. For real use, you'd need your own Backstage image and Postgres.
+
 ## Troubleshooting
 
 | Symptom | Likely cause and fix |
 |---|---|
+| Ingress `EXTERNAL-IP` stays `<pending>` or doesn't match `$INGRESS_IP` | The reserved address is in a different region or already in use. Check with `gcloud compute addresses list`. |
+| `istio-ingress` pods in `ImagePullBackOff` with `image: auto` | The gateway was created before istiod's injector was running. Fix: `kubectl -n istio-ingress rollout restart deploy/istio-ingressgateway` |
+| `istio-base` / `istiod` keep going OutOfSync on webhook configurations | istiod rewrites these at runtime. The apps' `ignoreDifferences` already covers the known fields; describe the app to see which other field is changing. |
+| The `nip.io` URLs time out in the browser | Your public IP changed, so the source-range restriction blocks you. Re-run step 10c. |
+| Backstage pod in `CreateContainerConfigError` | The `backstage-github` Secret is missing. Re-run the first commands of step 11. |
+| Backstage page is blank or shows errors | Check `kubectl -n backstage logs deploy/backstage`. Config errors show up at startup. |
+| Argo CD URL shows an Istio 404 or a connection reset | The `istio-routes` app isn't Synced, or the `INGRESS_IP` placeholders weren't replaced before the push. Check: `grep -rn INGRESS_IP infrastructure` |
 | `fatal: bad repository ''` | The step 1 variables aren't set in this terminal. Run the `export` lines again. |
 | Root app shows `repository not found` / `authentication required` | Step 5 hasn't been pushed yet, or the repo isn't public. |
 | Root app is Synced but nothing gets created | An older root app without `directory.recurse` was applied. Re-run step 6. |
@@ -190,5 +281,6 @@ kubectl -n argocd rollout restart deploy/argocd-server
 
 ```bash
 gcloud container clusters delete "$CLUSTER" --zone "$ZONE" --quiet
+gcloud compute addresses delete istio-ingress --region "$REGION" --quiet
 gcloud config configurations activate default     # Mac: back to your own gcloud account
 ```

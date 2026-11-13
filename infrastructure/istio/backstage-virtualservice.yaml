@@ -1,0 +1,16 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: backstage
+  namespace: backstage
+spec:
+  hosts:
+    - backstage.34.28.253.199.nip.io
+  gateways:
+    - istio-ingress/platform-gateway
+  http:
+    - route:
+        - destination:
+            host: backstage.backstage.svc.cluster.local
+            port:
+              number: 7007

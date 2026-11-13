@@ -36,6 +36,16 @@ There are three layers, and onboarding one app touches all of them:
    - Both Applications in `applications/` are applied by hand with `kubectl`; nothing syncs them.
    - `application.yaml` is the root app. It recursively syncs `infrastructure/crossplane` into `crossplane-system`, with `SkipDryRunOnMissingResource` and retry because the ProviderConfig and claim CRDs only appear after the Provider and XRD install.
    - `backend-applications.yaml` is an app-of-apps for `backend/applications/`. That folder is empty except for `.gitkeep` until template PRs add per-app Applications. Each per-app Application deploys the app repo's `deploy/` folder into namespace `<appname>-<env>`.
+   - `platform/` holds the platform services, applied one at a time with `kubectl` in the order given in `GKE-SETUP.md` steps 10–11. They're deliberately not an app-of-apps: Argo CD doesn't wait for child-app health, and the ingress gateway must be created after istiod's injector exists.
+     - Istio is installed from Helm charts pinned to version 1.30.8: `istio-base`, then `istiod`, then `istio-ingressgateway` (namespace `istio-ingress`, pod label `istio=ingressgateway`).
+     - `backstage` is the official chart's demo image. It reads the GitHub token from Secret `backstage/backstage-github`, which is created by hand.
+     - `istio-routes` syncs `infrastructure/istio/`.
+
+4. **Ingress** (`infrastructure/istio/`): one Istio `Gateway`, `istio-ingress/platform-gateway`, plus a `VirtualService` per UI. Hosts are `<name>.<static-ip>.nip.io`.
+   - Argo CD uses TLS **passthrough**, so it keeps its own self-signed cert.
+   - Backstage is served over plain HTTP.
+   - The static IP is hardcoded in these files and in `platform/istio-ingressgateway.yaml` and `platform/backstage.yaml`. In the template state it's the placeholder `INGRESS_IP`, which step 10a replaces with `sed`.
+   - The restriction of the gateway Service to the user's own IP (`loadBalancerSourceRanges`) is applied with `kubectl patch`, never committed, so the user's IP stays out of the public repo.
 
 **Naming invariant:** the claim's `appName` is set to `<appname>-<env>`, so the namespace Crossplane creates matches the destination namespace of the Argo CD Application. Keep the two in sync if you change either template.
 
@@ -48,7 +58,6 @@ There are three layers, and onboarding one app touches all of them:
 - `infrastructure/argocd/backend/application/testapp.yaml` (singular `application`) is an empty stray file.
 - The GitHub owner `ehalilovic700` is hardcoded in the template, the skeleton and the Argo CD apps.
 - The provider config file is named `k8s-provide-config.yaml` (sic).
-- Some provider and function package versions (`xpkg.upbound.io/...`) are old and may not be pullable anymore.
 
 ## Editing skeleton files
 
