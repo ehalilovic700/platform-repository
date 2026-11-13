@@ -1,0 +1,29 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crossplane-platform-demonstration
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ehalilovic700/platform-repository.git
+    targetRevision: main
+    path: infrastructure/crossplane
+    directory:
+      recurse: true              # every manifest lives in a subfolder
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: crossplane-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # ProviderConfig/claim CRDs only exist after the Provider and XRD install
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

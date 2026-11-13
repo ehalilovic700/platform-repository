@@ -1,0 +1,28 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xlocalclusters.platform.example.org
+spec:
+  group: platform.example.org
+  names:
+    kind: XLocalCluster
+    plural: xlocalclusters
+  claimNames:
+    kind: LocalCluster
+    plural: localclusters
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [appName, environment]
+              properties:
+                appName:
+                  type: string
+                environment:
+                  type: string

@@ -1,0 +1,7 @@
+apiVersion: platform.example.org/v1alpha1
+kind: LocalCluster
+metadata:
+  name: ${{values.appname}}-${{values.env}}
+spec:
+  appName: ${{values.appname}}-${{values.env}}
+  environment: ${{values.env}}

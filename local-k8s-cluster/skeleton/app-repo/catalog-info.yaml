@@ -1,0 +1,12 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{values.appname}}
+  annotations:
+    backstage.io/source-location: url:https://github.com/ehalilovic700/${{values.appname}}
+    github.com/project-slug: ehalilovic700/${{values.appname}}
+    backstage.io/techdocs-ref: url:https://github.com/ehalilovic700/${{values.appname}}/tree/main
+spec:
+  type: service
+  owner: development
+  lifecycle: experimental

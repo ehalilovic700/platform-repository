@@ -1,0 +1,91 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+
+metadata:
+  name: local-cluster-with-app
+  title: Local Cluster + App + CI
+  description: Creates app repo and commits infra manifests
+  tags:
+    - kubernetes
+    - crossplane
+    - argocd
+
+spec:
+  owner: platform-team
+  type: service
+
+  parameters:
+    - title: Application Details
+      required:
+        - appname
+        - env
+      properties:
+        appname:
+          title: Application Name
+          type: string
+        env:
+          title: Environment
+          type: string
+
+  steps:
+    - id: render
+      name: Render Skeleton
+      action: fetch:template
+      input:
+        url: ./skeleton
+        targetPath: ./workspace
+        values:
+          appname: ${{ parameters.appname }}
+          env: ${{ parameters.env }}
+
+    - id: publish-app
+      name: Publish Application Repository
+      action: publish:github
+      input:
+        repoUrl: github.com?owner=ehalilovic700&repo=${{parameters.appname}}
+        defaultBranch: main
+        description: Application repo for ${{ parameters.appname }}
+        sourcePath: ./workspace/app-repo
+
+    - id: prepare-argocd
+      action: fs:rename
+      input:
+        files:
+          - from: ./workspace/platform-repo/argocd/application.yaml
+            to: ./workspace/platform-final/infrastructure/argocd/backend/applications/${{ parameters.appname }}-${{ parameters.env }}.yaml
+
+    - id: prepare-crossplane
+      action: fs:rename
+      input:
+        files:
+          - from: ./workspace/platform-repo/crossplane/claim.yaml
+            to: ./workspace/platform-final/infrastructure/crossplane/claims/${{ parameters.appname }}-${{ parameters.env }}.yaml
+
+    - id: create-platform-pr
+      name: Create platform PR
+      action: publish:github:pull-request
+      input:
+        repoUrl: github.com?owner=ehalilovic700&repo=platform-repository
+        branchName: add-${{ parameters.appname }}-${{ parameters.env }}
+        title: "Add ${{ parameters.appname }} (${{ parameters.env }})"
+        description: |
+          Adds ArgoCD and Crossplane manifests for
+          ${{ parameters.appname }} in ${{ parameters.env }} environment.
+        sourcePath: ./workspace/platform-final
+        targetBranchName: main
+
+    - id: register
+      name: Register in Backstage
+      action: catalog:register
+      input:
+        repoContentsUrl: https://github.com/ehalilovic700/${{ parameters.appname }}/blob/main
+        catalogInfoPath: /catalog-info.yaml
+
+  output:
+    text:
+      - title: Repository Created
+        content: |
+          Repository: https://github.com?owner=ehalilovic700&repo=${{parameters.appname}}
+          Namespace: ${{ parameters.appname }}-${{ parameters.env }}
+          ArgoCD Path: infrastructure/argocd/applications
+          Crossplane Path: infrastructure/crossplane/claims

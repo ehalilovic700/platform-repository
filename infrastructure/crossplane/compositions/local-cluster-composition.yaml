@@ -1,0 +1,82 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: localcluster
+spec:
+  mode: Pipeline
+
+  compositeTypeRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: XLocalCluster
+
+  pipeline:
+    - step: create-resources
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: patch-and-transform.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          # Create Namespace
+          - name: namespace
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                providerConfigRef:
+                  name: local-k8s
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: Namespace
+                    metadata:
+                      name: placeholder
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.appName
+                toFieldPath: spec.forProvider.manifest.metadata.name
+
+          # Create GHCR imagePull Secret
+          - name: ghcr-secret
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                providerConfigRef:
+                  name: local-k8s
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: Secret
+                    type: kubernetes.io/dockerconfigjson
+                    metadata:
+                      name: ghcr-secret
+                      namespace: placeholder
+                    data:
+                      .dockerconfigjson: eyJhdXRocyI6e319  # {"auths":{}} placeholder: real registry creds must not live in git
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.appName
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+
+          # Patch Default ServiceAccount
+          - name: patch-default-sa
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                providerConfigRef:
+                  name: local-k8s
+                forProvider:
+                  manifest:
+                    apiVersion: v1
+                    kind: ServiceAccount
+                    metadata:
+                      name: default
+                      namespace: placeholder
+                    imagePullSecrets:
+                      - name: ghcr-secret
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.appName
+                toFieldPath: spec.forProvider.manifest.metadata.namespace

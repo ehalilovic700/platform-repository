@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ '${{ secrets.GITHUB_TOKEN }}' }}" | docker login ghcr.io -u ${{ '${{ github.actor }}' }} --password-stdin
+
+      - name: Build Docker image
+        run: docker build -t ghcr.io/${{ '${{ github.repository_owner }}' }}/${{ values.appname }}:${{ '${{ github.sha }}' }} .
+
+      - name: Push image
+        run: docker push ghcr.io/${{ '${{ github.repository_owner }}' }}/${{ values.appname }}:${{ '${{ github.sha }}' }}
+
+      - name: Update manifest
+        run: |
+          sed -i "s|image: .*|image: ghcr.io/${{ '${{ github.repository_owner }}' }}/${{ values.appname }}:${{ '${{ github.sha }}' }}|" deploy/deployment.yaml
+
+      - name: Commit manifest update
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git commit -am "Update image tag"
+          git push

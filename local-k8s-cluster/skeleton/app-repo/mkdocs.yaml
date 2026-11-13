@@ -1,0 +1,15 @@
+site_name: "${{values.appname}}"
+site_description: "Main documentation for ${{values.appname}}"
+repo_url: https://github.com/ehalilovic700/${{values.appname}}.git
+edit_uri: edit/main/docs
+
+plugins: #plugin that we will use to convert the .md to .html
+  - techdocs-core
+
+# For sidebar navigation on https://backstage.io/, see `microsite/sidebars.js`
+nav:
+  - Overview:
+      - Getting started?: "index.md" # Mention the .md file location here
+  - Application Architecture:
+      - App architecture overview: "application-architecture.md"
+      - App architecture deep-dive: "application-architecture-deepdive.md"

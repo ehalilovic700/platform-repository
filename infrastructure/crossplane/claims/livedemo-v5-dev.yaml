@@ -1,0 +1,7 @@
+apiVersion: platform.example.org/v1alpha1
+kind: LocalCluster
+metadata:
+  name: livedemo-v5-dev
+spec:
+  appName: livedemo-v5-dev
+  environment: dev
