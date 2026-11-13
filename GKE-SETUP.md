@@ -237,13 +237,15 @@ kubectl -n istio-ingress patch svc istio-ingressgateway --type merge \
 | URL | Routes to | TLS |
 |---|---|---|
 | `https://argocd.<INGRESS_IP>.nip.io` | `argocd-server.argocd:443` | Passed through to Argo CD's own self-signed cert. HTTP redirects to HTTPS. |
-| `http://backstage.<INGRESS_IP>.nip.io` | `backstage.backstage:7007` | Plain HTTP |
+| `https://backstage.<INGRESS_IP>.nip.io` | `backstage.backstage:7007` | Terminated at the gateway with a self-signed cert (Secret `istio-ingress/backstage-tls`). HTTP redirects to HTTPS. |
+
+Backstage **must** be served over HTTPS. Its frontend calls `crypto.randomUUID()`, which browsers only provide on secure (HTTPS) pages. Over plain HTTP, the sidebar crashes with `globalThis.crypto.randomUUID is not a function`, so there's no **Create** button.
 
 Backstage runs **your own image**, `ghcr.io/ehalilovic700/backstage`, with the chart's bundled PostgreSQL. It uses guest sign-in and loads `local-k8s-cluster/template.yaml` from this repo.
 
 The image is built once in step 12 (12a–12d) and stays in GHCR, so a new sandbox can reuse it. If it doesn't exist yet, do 12a–12d first.
 
-Two Secrets are created by hand and never committed: your GitHub token, and a fixed Postgres password.
+Three Secrets are created by hand and never committed: your GitHub token, a fixed Postgres password, and the TLS certificate.
 
 ```bash
 kubectl create namespace backstage
@@ -253,6 +255,16 @@ kubectl -n backstage create secret generic backstage-postgres \
   --from-literal=admin-password="$(openssl rand -hex 16)" \
   --from-literal=user-password="$(openssl rand -hex 16)"
 
+# Self-signed TLS certificate for Backstage. The gateway reads it from its own namespace.
+CERT_DIR=$(mktemp -d)
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+  -keyout "$CERT_DIR/tls.key" -out "$CERT_DIR/tls.crt" \
+  -subj "/CN=backstage.$INGRESS_IP.nip.io" \
+  -addext "subjectAltName=DNS:backstage.$INGRESS_IP.nip.io"
+kubectl -n istio-ingress create secret tls backstage-tls \
+  --cert="$CERT_DIR/tls.crt" --key="$CERT_DIR/tls.key"
+rm -rf "$CERT_DIR"
+
 kubectl apply -f infrastructure/argocd/platform/backstage.yaml
 wait_app backstage                 # the first start takes 2-3 minutes
 
@@ -260,14 +272,14 @@ kubectl apply -f infrastructure/argocd/platform/istio-routes.yaml
 wait_app istio-routes
 
 curl -skI "https://argocd.$INGRESS_IP.nip.io" | head -1      # expect 200
-curl -sI  "http://backstage.$INGRESS_IP.nip.io" | head -1    # expect 200
+curl -skI "https://backstage.$INGRESS_IP.nip.io" | head -1   # expect 200
 
 echo "Argo CD:   https://argocd.$INGRESS_IP.nip.io"
-echo "Backstage: http://backstage.$INGRESS_IP.nip.io"
+echo "Backstage: https://backstage.$INGRESS_IP.nip.io"
 ```
 
 - **Argo CD:** accept the self-signed certificate warning and log in as `admin`. Change the initial password right away: **User Info → Update Password**. Once you've done that, remove the initial password Secret: `kubectl -n argocd delete secret argocd-initial-admin-secret`.
-- **Backstage:** click **Enter** as Guest, then **Create**. The **Local Cluster + App + CI** template should be listed. It may take a minute to appear while the catalog does its first read.
+- **Backstage:** accept the self-signed certificate warning, click **Enter** as Guest, then **Create**. The **Local Cluster + App + CI** template should be listed. It may take a minute to appear while the catalog does its first read.
 - The catalog is stored in Postgres (a 2Gi volume), so it survives pod restarts. It's lost when the cluster is deleted.
 
 ## 12. Build your own Backstage app (replaces the demo image)
@@ -425,7 +437,7 @@ git commit -m "Backstage: own image + PostgreSQL"
 git push
 ```
 
-Hard-refresh http://backstage.34.28.253.199.nip.io (Cmd+Shift+R), because the browser may have cached the old frontend. You should see the sidebar, and **Create** should list **Local Cluster + App + CI**.
+Hard-refresh https://backstage.34.28.253.199.nip.io (Cmd+Shift+R), because the browser may have cached the old frontend. You should see the sidebar, and **Create** should list **Local Cluster + App + CI**.
 
 To roll out a new build of your app later, push to `ehalilovic700/backstage`, wait for CI, then run `kubectl -n backstage rollout restart deploy/backstage`.
 
@@ -435,7 +447,7 @@ The examples use the app name `hello-demo` and environment `dev`, so everything 
 
 ### 13a. Run the template in Backstage
 
-Open http://backstage.34.28.253.199.nip.io, click **Create**, choose **Local Cluster + App + CI**, and enter:
+Open https://backstage.34.28.253.199.nip.io, click **Create**, choose **Local Cluster + App + CI**, and enter:
 
 - Application Name: `hello-demo` (lowercase letters, digits and dashes; it must not be the name of a repo you already have)
 - Environment: `dev`
@@ -514,6 +526,8 @@ Finally, in Backstage, open the `hello-demo` component, click **⋮**, then **Un
 
 | Symptom | Likely cause and fix |
 |---|---|
+| Backstage has no sidebar or Create button, and a red toast shows `globalThis.crypto.randomUUID is not a function` | The page was opened over plain HTTP. Use `https://backstage.<INGRESS_IP>.nip.io`, and make sure the `backstage-tls` Secret exists in `istio-ingress` (step 11). |
+| `https://backstage...` resets the connection or shows Istio's default 404 | The `istio-ingress/backstage-tls` Secret is missing, or `istio-routes` hasn't synced the new Gateway yet. |
 | A template step fails at `publish:github` with `Bad credentials` / `Resource not accessible` | The token in `backstage/backstage-github` is missing or expired. Re-create it with `gh auth token` (it needs the `repo` and `workflow` scopes), then run `kubectl -n backstage rollout restart deploy/backstage` |
 | A template step fails with `Repository creation failed ... name already exists` | Choose another app name, or delete the old repo first. |
 | App pods are in `ImagePullBackOff` with `ghcr.io/ehalilovic700/<app>` | The app's GHCR package is still private (step 13b), or its CI hasn't finished yet. |

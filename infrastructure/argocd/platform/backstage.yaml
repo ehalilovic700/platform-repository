@@ -29,14 +29,14 @@ spec:
           extraEnvVarsSecrets:
             - backstage-github
           appConfig:
+            # HTTPS is required: the frontend uses crypto.randomUUID, which browsers
+            # only provide on secure (HTTPS) pages. TLS terminates at the Istio gateway.
             app:
-              baseUrl: http://backstage.34.28.253.199.nip.io
+              baseUrl: https://backstage.34.28.253.199.nip.io
             backend:
-              baseUrl: http://backstage.34.28.253.199.nip.io
+              baseUrl: https://backstage.34.28.253.199.nip.io
               cors:
-                origin: http://backstage.34.28.253.199.nip.io
-              csp:
-                upgrade-insecure-requests: false   # served over plain HTTP
+                origin: https://backstage.34.28.253.199.nip.io
               database:
                 client: pg                         # default division mode: one database per plugin
                                                    # (role 'backstage' has CREATEDB). Don't use

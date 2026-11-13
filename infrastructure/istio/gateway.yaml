@@ -1,5 +1,7 @@
 # Single entry point for the platform UIs. Hostnames use nip.io, so
 # <name>.<ip>.nip.io resolves to the ingress IP without any DNS setup.
+# Both UIs are HTTPS-only: Backstage's frontend needs a secure context
+# (crypto.randomUUID), so plain HTTP just redirects.
 apiVersion: networking.istio.io/v1
 kind: Gateway
 metadata:
@@ -11,18 +13,24 @@ spec:
   servers:
     - port:
         number: 80
-        name: http-backstage
+        name: http-redirect
         protocol: HTTP
       hosts:
         - backstage.34.28.253.199.nip.io
-    - port:
-        number: 80
-        name: http-argocd
-        protocol: HTTP
-      hosts:
         - argocd.34.28.253.199.nip.io
       tls:
         httpsRedirect: true
+    # Backstage: TLS terminated here with a self-signed cert. Secret
+    # istio-ingress/backstage-tls is created by hand (GKE-SETUP.md step 11), never in git.
+    - port:
+        number: 443
+        name: https-backstage
+        protocol: HTTPS
+      hosts:
+        - backstage.34.28.253.199.nip.io
+      tls:
+        mode: SIMPLE
+        credentialName: backstage-tls
     # Argo CD terminates TLS itself (self-signed cert), so pass it through untouched
     - port:
         number: 443

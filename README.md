@@ -63,7 +63,7 @@ Hostnames use [nip.io](https://nip.io), so they resolve to the ingress IP withou
 | UI | URL |
 |---|---|
 | Argo CD | `https://argocd.<INGRESS_IP>.nip.io` (TLS passed through to Argo CD's self-signed certificate) |
-| Backstage | `http://backstage.<INGRESS_IP>.nip.io` (sign in as Guest) |
+| Backstage | `https://backstage.<INGRESS_IP>.nip.io` (self-signed certificate terminated at the gateway; sign in as Guest). HTTPS is required, because over HTTP the sidebar crashes (`crypto.randomUUID`). |
 
 To find the ingress IP: `kubectl -n istio-ingress get svc istio-ingressgateway`.
 

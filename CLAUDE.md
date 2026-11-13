@@ -48,7 +48,8 @@ There are three layers, and onboarding one app touches all of them:
 
 4. **Ingress** (`infrastructure/istio/`): one Istio `Gateway`, `istio-ingress/platform-gateway`, plus a `VirtualService` per UI. Hosts are `<name>.<static-ip>.nip.io`.
    - Argo CD uses TLS **passthrough**, so it keeps its own self-signed cert.
-   - Backstage is served over plain HTTP.
+   - Backstage's TLS is terminated at the gateway with a self-signed cert from Secret `istio-ingress/backstage-tls`, which is created by hand and never committed. HTTP redirects to HTTPS for both hosts.
+   - Backstage must stay on HTTPS: its new-frontend-system UI calls `crypto.randomUUID`, which only exists on secure pages. Over plain HTTP the sidebar extension (`nav-content:app`) crashes.
    - The static IP is hardcoded in these files and in `platform/istio-ingressgateway.yaml` and `platform/backstage.yaml`. In the template state it's the placeholder `INGRESS_IP`, which step 10a replaces with `sed`.
    - The restriction of the gateway Service to the user's own IP (`loadBalancerSourceRanges`) is applied with `kubectl patch`, never committed, so the user's IP stays out of the public repo.
 
