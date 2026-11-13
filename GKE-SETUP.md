@@ -199,7 +199,9 @@ grep -rn INGRESS_IP infrastructure || echo "OK: IP filled in"
 git add . && git commit -m "Add Istio ingress, Backstage and routes" && git push
 ```
 
-**10b. Install Istio in order.** Each step waits until the previous Argo CD app is Healthy:
+**10b. Install Istio in order.** Each step waits until the previous Argo CD app is Healthy.
+
+It's normal for `istio-base` to stay `Progressing` for about 3 minutes, and for `istiod` to show `Degraded` for under a minute while its autoscaler waits for its first CPU readings.
 
 ```bash
 wait_app() { until [ "$(kubectl -n argocd get application "$1" -o jsonpath='{.status.health.status}' 2>/dev/null)" = Healthy ]; do echo "waiting for $1..."; sleep 10; done; echo "$1 is Healthy"; }
@@ -255,7 +257,7 @@ echo "Argo CD:   https://argocd.$INGRESS_IP.nip.io"
 echo "Backstage: http://backstage.$INGRESS_IP.nip.io"
 ```
 
-- **Argo CD:** accept the self-signed certificate warning and log in as `admin`. The password was shared in chat, so change it right away: **User Info → Update Password**. Once you've done that, remove the initial password Secret: `kubectl -n argocd delete secret argocd-initial-admin-secret`.
+- **Argo CD:** accept the self-signed certificate warning and log in as `admin`. Change the initial password right away: **User Info → Update Password**. Once you've done that, remove the initial password Secret: `kubectl -n argocd delete secret argocd-initial-admin-secret`.
 - **Backstage:** click **Enter** as Guest, then **Create**. The **Local Cluster + App + CI** template should be listed. It may take a minute to appear while the catalog does its first read.
 - The demo image keeps everything in memory, so catalog changes are lost whenever the pod restarts. That's fine for a sandbox. For real use, you'd need your own Backstage image and Postgres.
 
