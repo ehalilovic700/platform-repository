@@ -38,7 +38,12 @@ There are three layers, and onboarding one app touches all of them:
    - `backend-applications.yaml` is an app-of-apps for `backend/applications/`. That folder is empty except for `.gitkeep` until template PRs add per-app Applications. Each per-app Application deploys the app repo's `deploy/` folder into namespace `<appname>-<env>`.
    - `platform/` holds the platform services, applied one at a time with `kubectl` in the order given in `GKE-SETUP.md` steps 10–11. They're deliberately not an app-of-apps: Argo CD doesn't wait for child-app health, and the ingress gateway must be created after istiod's injector exists.
      - Istio is installed from Helm charts pinned to version 1.30.8: `istio-base`, then `istiod`, then `istio-ingressgateway` (namespace `istio-ingress`, pod label `istio=ingressgateway`).
-     - `backstage` is the official chart's demo image. It reads the GitHub token from Secret `backstage/backstage-github`, which is created by hand.
+     - `backstage` runs the user's own app image, `ghcr.io/ehalilovic700/backstage`. That image is built by GitHub Actions in the separate repo `ehalilovic700/backstage` (a `create-app` app) as linux/amd64, because the user's Mac is Apple Silicon.
+       - It uses the chart's bundled PostgreSQL in Backstage's default mode: one database per plugin (`backstage_plugin_*`). The bitnami role `backstage` has CREATEDB, which this mode needs.
+       - Don't switch to `pluginDivisionMode: schema`: plugins collided creating their migration tables at first start (`knex_migrations_lock already exists`).
+       - Hand-made Secrets: `backstage/backstage-github` (`GITHUB_TOKEN`) and `backstage/backstage-postgres` (`admin-password`, `user-password`). The Postgres password must be fixed, because a chart-generated one would change on every Argo CD sync.
+       - Config overrides use Backstage `$env:` references rather than `${VAR}`.
+       - With tag `latest` + `pullPolicy: Always`, a new build is rolled out with `kubectl -n backstage rollout restart deploy/backstage`.
      - `istio-routes` syncs `infrastructure/istio/`.
 
 4. **Ingress** (`infrastructure/istio/`): one Istio `Gateway`, `istio-ingress/platform-gateway`, plus a `VirtualService` per UI. Hosts are `<name>.<static-ip>.nip.io`.

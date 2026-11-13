@@ -7,6 +7,7 @@ When you're done, you'll have:
 - the root Argo CD app, which syncs `infrastructure/crossplane` from **your** GitHub repo `ehalilovic700/platform-repository` (it installs provider-kubernetes, the function, the XRD and Composition, and the `livedemo-v5-dev` claim)
 - an app-of-apps for the per-app Applications that the Backstage template adds
 - Istio, with its ingress gateway as the cluster's ingress controller, exposing Argo CD and Backstage (steps 10–11)
+- your own Backstage app image with PostgreSQL, instead of the chart's demo image (step 12)
 
 Argo CD reads from GitHub `main`, not from this folder. Any repo change only takes effect after you push it.
 
@@ -237,12 +238,19 @@ kubectl -n istio-ingress patch svc istio-ingressgateway --type merge \
 | `https://argocd.<INGRESS_IP>.nip.io` | `argocd-server.argocd:443` | Passed through to Argo CD's own self-signed cert. HTTP redirects to HTTPS. |
 | `http://backstage.<INGRESS_IP>.nip.io` | `backstage.backstage:7007` | Plain HTTP |
 
-Backstage is installed from the official chart's stock demo image. It uses an in-memory database and guest sign-in, and loads `local-k8s-cluster/template.yaml` from your repo. For GitHub it uses your `gh` token from a Secret, which is never committed:
+Backstage runs **your own image**, `ghcr.io/ehalilovic700/backstage`, with the chart's bundled PostgreSQL. It uses guest sign-in and loads `local-k8s-cluster/template.yaml` from this repo.
+
+The image is built once in step 12 (12a–12d) and stays in GHCR, so a new sandbox can reuse it. If it doesn't exist yet, do 12a–12d first.
+
+Two Secrets are created by hand and never committed: your GitHub token, and a fixed Postgres password.
 
 ```bash
 kubectl create namespace backstage
 kubectl -n backstage create secret generic backstage-github \
   --from-literal=GITHUB_TOKEN="$(gh auth token)"
+kubectl -n backstage create secret generic backstage-postgres \
+  --from-literal=admin-password="$(openssl rand -hex 16)" \
+  --from-literal=user-password="$(openssl rand -hex 16)"
 
 kubectl apply -f infrastructure/argocd/platform/backstage.yaml
 wait_app backstage                 # the first start takes 2-3 minutes
@@ -259,7 +267,166 @@ echo "Backstage: http://backstage.$INGRESS_IP.nip.io"
 
 - **Argo CD:** accept the self-signed certificate warning and log in as `admin`. Change the initial password right away: **User Info → Update Password**. Once you've done that, remove the initial password Secret: `kubectl -n argocd delete secret argocd-initial-admin-secret`.
 - **Backstage:** click **Enter** as Guest, then **Create**. The **Local Cluster + App + CI** template should be listed. It may take a minute to appear while the catalog does its first read.
-- The demo image keeps everything in memory, so catalog changes are lost whenever the pod restarts. That's fine for a sandbox. For real use, you'd need your own Backstage image and Postgres.
+- The catalog is stored in Postgres (a 2Gi volume), so it survives pod restarts. It's lost when the cluster is deleted.
+
+## 12. Build your own Backstage app (replaces the demo image)
+
+The Helm chart's default image, `ghcr.io/backstage/backstage`, is a demo build with a minimal UI and no sidebar. The [Backstage Kubernetes guide](https://backstage.io/docs/deployment/k8s) instead deploys **your own app**, created with `create-app`, which has the usual sidebar: Home, Catalog, APIs, Docs, Create…
+
+The image is built by GitHub Actions on x86 (amd64). Don't build it on your Mac: Apple Silicon produces an ARM image, and the GKE nodes can't run it.
+
+Steps 12a–12d are done once; the image then stays in GHCR. Step 12e switches a running cluster over to it.
+
+### 12a. Create the app (Mac, about 5 minutes)
+
+This needs Node 22 or 24 (you have 24).
+
+```bash
+cd ~/Downloads
+npx @backstage/create-app@latest --path backstage    # when asked for the app name, enter: backstage
+```
+
+Optionally, preview it locally with `cd ~/Downloads/backstage && yarn start` and open http://localhost:3000. Press Ctrl-C when you're done.
+
+### 12b. Prepare the app for the cluster
+
+There are three changes:
+
+1. Install `mkdocs` into the image, so the **Docs** tab can build docs inside the pod.
+2. Change `backend.listen` from a string to object form. The Helm chart injects `APP_CONFIG_backend_listen_port`, and Backstage can't combine that with `listen: ':7007'`, so it crashes at startup.
+3. Add a CI workflow that builds the image and pushes it to GHCR.
+
+```bash
+cd ~/Downloads/backstage
+
+python3 - <<'EOF'
+p = 'packages/backend/Dockerfile'
+s = open(p).read()
+block = '''# TechDocs: build docs inside the container (techdocs.generator.runIn: local)
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends python3 python3-pip python3-venv && \\
+    rm -rf /var/lib/apt/lists/*
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+RUN pip3 install mkdocs-techdocs-core
+
+'''
+if 'mkdocs-techdocs-core' in s:
+    print('already done')
+elif 'USER node' not in s:
+    print('USER node not found - paste the block above the line that switches to the node user')
+else:
+    open(p, 'w').write(s.replace('USER node', block + 'USER node', 1))
+    print('Dockerfile updated')
+EOF
+
+python3 - <<'EOF'
+p = 'app-config.production.yaml'
+s = open(p).read()
+if "listen: ':7007'" in s:
+    open(p, 'w').write(s.replace("listen: ':7007'", "listen:\n    port: 7007", 1))
+    print('backend.listen changed to object form')
+else:
+    print('backend.listen already OK')
+EOF
+
+mkdir -p .github/workflows
+cat > .github/workflows/build-image.yaml <<'EOF'
+name: Build image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: yarn install --immutable
+      - run: yarn tsc
+      - run: yarn build:backend
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/backstage:latest
+            ghcr.io/${{ github.repository_owner }}/backstage:${{ github.sha }}
+EOF
+```
+
+### 12c. Push the app to GitHub and let CI build it (about 10 minutes)
+
+```bash
+cd ~/Downloads/backstage
+git init -b main 2>/dev/null       # harmless if create-app already did it
+git add -A
+git commit -m "Backstage app with CI image build"
+git branch -M main
+gh repo create ehalilovic700/backstage --public --source . --push
+
+sleep 15
+gh run watch "$(gh run list --workflow build-image.yaml --limit 1 --json databaseId -q '.[0].databaseId')"
+```
+
+### 12d. Make the image public (one time, in the browser)
+
+New GHCR packages are private, and the cluster has no credentials to pull them.
+
+Open https://github.com/users/ehalilovic700/packages/container/package/backstage, go to **Package settings**, then **Change visibility**, and choose **Public**.
+
+Check that it can be pulled anonymously:
+
+```bash
+TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:ehalilovic700/backstage:pull" | sed -E 's/.*"token":"([^"]+)".*/\1/')
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+  https://ghcr.io/v2/ehalilovic700/backstage/manifests/latest     # 200 = public
+```
+
+### 12e. Switch the running cluster to your image and Postgres
+
+`infrastructure/argocd/platform/backstage.yaml` already points to your image and enables the chart's PostgreSQL. Like the other files in `platform/`, Argo CD doesn't sync it from git: apply it with `kubectl`, and push it so the repo matches.
+
+```bash
+kubectl -n backstage create secret generic backstage-postgres \
+  --from-literal=admin-password="$(openssl rand -hex 16)" \
+  --from-literal=user-password="$(openssl rand -hex 16)"
+
+cd ~/Downloads/platform-repository-main
+kubectl apply -f infrastructure/argocd/platform/backstage.yaml
+
+kubectl -n backstage rollout status statefulset/backstage-postgresql --timeout=300s
+kubectl -n backstage rollout status deploy/backstage --timeout=600s
+wait_app backstage
+
+git add infrastructure/argocd/platform/backstage.yaml
+git commit -m "Backstage: own image + PostgreSQL"
+git push
+```
+
+Hard-refresh http://backstage.34.28.253.199.nip.io (Cmd+Shift+R), because the browser may have cached the old frontend. You should see the sidebar, and **Create** should list **Local Cluster + App + CI**.
+
+To roll out a new build of your app later, push to `ehalilovic700/backstage`, wait for CI, then run `kubectl -n backstage rollout restart deploy/backstage`.
 
 ## Troubleshooting
 
@@ -272,6 +439,12 @@ echo "Backstage: http://backstage.$INGRESS_IP.nip.io"
 | Backstage pod in `CreateContainerConfigError` | The `backstage-github` Secret is missing. Re-run the first commands of step 11. |
 | Backstage page is blank or shows errors | Check `kubectl -n backstage logs deploy/backstage`. Config errors show up at startup. |
 | Argo CD URL shows an Istio 404 or a connection reset | The `istio-routes` app isn't Synced, or the `INGRESS_IP` placeholders weren't replaced before the push. Check: `grep -rn INGRESS_IP infrastructure` |
+| CI fails in the Backstage repo | Run `gh run view --log-failed -R ehalilovic700/backstage`. Usually it's `yarn tsc` or `yarn build:backend` in the generated app. |
+| Backstage crashes with `Invalid type in config for key 'backend.listen' ... got string, wanted object` | Your app's `app-config.production.yaml` has `listen: ':7007'`. Change it to `listen:` / `port: 7007` (step 12b), push, wait for CI, then `kubectl -n backstage rollout restart deploy/backstage`. |
+| Backstage pod in `ImagePullBackOff` (step 12) | CI hasn't finished yet, or the package is still private. See step 12d. |
+| Backstage logs show `password authentication failed` | `backstage-postgres` was recreated after Postgres had already set up its volume (it only reads the password the first time). Fix: `kubectl -n backstage delete pvc data-backstage-postgresql-0 && kubectl -n backstage delete pod backstage-postgresql-0`. This wipes the catalog. |
+| Still no sidebar after step 12e | The browser is using the cached old frontend: hard-refresh. Also check that the pod runs your image: `kubectl -n backstage get pods -o jsonpath='{..image}'` |
+| The **Docs** tab says the docs failed to build | The image was built before step 12b's Dockerfile change. Re-run CI, then restart the deployment. |
 | `fatal: bad repository ''` | The step 1 variables aren't set in this terminal. Run the `export` lines again. |
 | Root app shows `repository not found` / `authentication required` | Step 5 hasn't been pushed yet, or the repo isn't public. |
 | Root app is Synced but nothing gets created | An older root app without `directory.recurse` was applied. Re-run step 6. |

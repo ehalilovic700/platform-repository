@@ -53,6 +53,7 @@ Onboarding an app (`appname`, `env`) through the Backstage template **Local Clus
 3. Apply the app-of-apps for per-app Applications (step 8).
 4. Reserve a static IP and install Istio and the ingress gateway, then restrict access to your own IP (step 10).
 5. Install Backstage and the routes that expose both UIs (step 11).
+6. Build your own Backstage app image once with `create-app` and CI, then switch to it (step 12).
 
 ## Accessing the UIs
 
@@ -71,7 +72,7 @@ To find the ingress IP: `kubectl -n istio-ingress get svc istio-ingressgateway`.
   - The GHCR pull secret in the composition is an empty placeholder, so it only works for public images.
   - Backstage's GitHub token comes from a Secret (`backstage/backstage-github`) that you create by hand.
 - **The ingress only accepts your own IP.** The `loadBalancerSourceRanges` setting on the gateway Service is applied with `kubectl patch` rather than committed, so your home IP stays out of this public repo. Re-run step 10c in the runbook whenever your IP changes.
-- **Backstage is the chart's demo image.** It uses an in-memory database and guest sign-in, so it's suitable only for a sandbox.
+- **Backstage runs your own image**, `ghcr.io/ehalilovic700/backstage`, built by CI in the [`ehalilovic700/backstage`](https://github.com/ehalilovic700/backstage) repo and backed by the chart's PostgreSQL. It only offers guest sign-in, so it's suitable only for a sandbox. The Postgres password comes from a Secret (`backstage/backstage-postgres`) that you create by hand.
 - **Change the Argo CD `admin` password** after your first login, then delete `argocd-initial-admin-secret`.
 
 ## Known limitations

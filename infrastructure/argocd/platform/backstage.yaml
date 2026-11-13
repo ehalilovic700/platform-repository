@@ -38,8 +38,10 @@ spec:
               csp:
                 upgrade-insecure-requests: false   # served over plain HTTP
               database:
-                client: pg
-                pluginDivisionMode: schema         # one DB, a schema per plugin (no CREATEDB needed)
+                client: pg                         # default division mode: one database per plugin
+                                                   # (role 'backstage' has CREATEDB). Don't use
+                                                   # pluginDivisionMode: schema - plugins race on
+                                                   # migration tables at first start.
                 connection:
                   host:
                     $env: POSTGRES_HOST            # POSTGRES_* env vars are injected by the chart
@@ -49,7 +51,6 @@ spec:
                     $env: POSTGRES_USER
                   password:
                     $env: POSTGRES_PASSWORD
-                  database: backstage
             auth:
               providers:
                 guest:
